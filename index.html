@@ -22,7 +22,7 @@
    <label class="upload"><span style="font-size:22px">＋</span><span><strong>Upload profile picture</strong><br><span class="tiny">Optional · PNG, JPG or WebP</span></span><input type="file" id="pfp" accept="image/*"></label>
    <button class="primary" id="authSubmit" type="submit">Create account <span>→</span></button>
    <div id="authNotice" class="auth-notice" role="status" aria-live="polite"></div><div class="auth-switch"><span id="switchCopy">Already have an account?</span> <button id="switchAuth" type="button">Log in</button></div>
-   <div class="tiny">Demo build: account details stay in this browser. Use a test password, not one you use elsewhere.</div>
+   <div class="tiny">Accounts are managed securely by Supabase. Use a unique password you do not use on other sites.</div>
   </form>
  </div>
 </div>
@@ -42,6 +42,19 @@
 <script>
 const SUPABASE_URL="https://xmacjsgjxjcnqhlwmnxq.supabase.co";
 const SUPABASE_PUBLISHABLE_KEY="sb_publishable_KX_l97WTg2CTjX4gnkbd9g__BrJV6Q9";
+// If the Supabase CDN fails to load, stop the browser's default form reload and show the real cause.
+if (!window.supabase || typeof window.supabase.createClient !== 'function') {
+  const form = document.querySelector('#authForm');
+  const notice = document.querySelector('#authNotice');
+  const showLoadError = () => {
+    notice.className = 'auth-notice show error';
+    notice.textContent = 'Supabase library did not load, so no signup request was sent. Check your internet connection or browser extensions, then refresh. If this persists, try another network/browser.';
+  };
+  form.addEventListener('submit', event => { event.preventDefault(); showLoadError(); });
+  window.addEventListener('load', showLoadError);
+  showLoadError();
+  throw new Error('Supabase JS CDN failed to load; signup handler not initialized.');
+}
 const supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY);
 const $=s=>document.querySelector(s), $$=s=>[...document.querySelectorAll(s)];
 const initialGiveaways=[
@@ -114,7 +127,7 @@ $('#authForm').onsubmit=async e=>{e.preventDefault();const name=$('#username').v
   }else{
    const {data,error}=await supabase.auth.signInWithPassword({email,password:pass});if(error)throw error;await finishLogin(data.user);
   }
- }catch(err){console.error(err);showAuthNotice((err.message||'Could not sign in. Check your details.')+' If this is a new account, check Supabase Authentication settings and confirm the database SQL was run in this project.',true)}
+ }catch(err){console.error('Giveawayz Supabase signup/login error:',err);const msg=err?.message||String(err)||'Unknown error';const networkLike=/fetch|network|failed to load|load failed|timeout|ERR_/i.test(msg);showAuthNotice((networkLike?'Could not reach Supabase. Check the project URL, internet connection, browser extensions, and Supabase project status. Details: ':'Supabase rejected the request. Details: ')+msg,true)}
  finally{$('#authSubmit').disabled=false}
 };
 supabase.auth.getSession().then(async({data,error})=>{if(error)showAuthNotice('Supabase session error: '+error.message,true);else if(data.session)await finishLogin(data.session.user,false)}).catch(err=>showAuthNotice('Supabase could not initialize: '+err.message,true));
