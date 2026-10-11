@@ -55,7 +55,16 @@ if (!window.supabase || typeof window.supabase.createClient !== 'function') {
   showLoadError();
   throw new Error('Supabase JS CDN failed to load; signup handler not initialized.');
 }
-const sbClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY);
+// Keep the Supabase session in this browser so users stay signed in after refresh/reopen.
+// Supabase stores the session in browser local storage and refreshes tokens automatically.
+const sbClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY, {
+  auth: {
+    persistSession: true,
+    autoRefreshToken: true,
+    detectSessionInUrl: true,
+    storage: window.localStorage
+  }
+});
 const $=s=>document.querySelector(s), $$=s=>[...document.querySelectorAll(s)];
 const initialGiveaways=[
  {id:'free1',title:'One free entry!',desc:'Jump into the draw for a chance to choose one of the prizes below.',emoji:'🎁',type:'free',entries:[],ends_at:null,gradient:'linear-gradient(120deg,#3d2b67,#171b31 70%)'},
@@ -133,7 +142,29 @@ $('#authForm').onsubmit=async e=>{e.preventDefault();const name=$('#username').v
  }catch(err){console.error('Giveawayz Supabase signup/login error:',err);const msg=err?.message||String(err)||'Unknown error';const networkLike=/fetch|network|failed to load|load failed|timeout|ERR_/i.test(msg);showAuthNotice((networkLike?'Could not reach Supabase. Check the project URL, internet connection, browser extensions, and Supabase project status. Details: ':'Supabase rejected the request. Details: ')+msg,true)}
  finally{$('#authSubmit').disabled=false}
 };
-sbClient.auth.getSession().then(async({data,error})=>{if(error)showAuthNotice('Supabase session error: '+error.message,true);else if(data.session)await finishLogin(data.session.user,false)}).catch(err=>showAuthNotice('Supabase could not initialize: '+err.message,true));
+let restoringSession = false;
+async function restoreSavedSession(){
+  if(restoringSession)return;
+  restoringSession=true;
+  try {
+    const {data,error}=await sbClient.auth.getSession();
+    if(error) throw error;
+    if(data.session) await finishLogin(data.session.user,false);
+  } catch(err) {
+    console.error('Could not restore saved Giveawayz session:',err);
+    showAuthNotice('Could not restore your saved login: '+(err?.message||err),true);
+  } finally { restoringSession=false; }
+}
+sbClient.auth.onAuthStateChange((event,session)=>{
+  if(session && !user && event!=='INITIAL_SESSION') {
+    // Defer Supabase calls outside the auth callback to avoid locking the auth client.
+    Promise.resolve().then(()=>finishLogin(session.user,false));
+  } else if(!session && event==='SIGNED_OUT' && user) {
+    user=null;
+    enterAuth();
+  }
+});
+restoreSavedSession();
 function timeLeft(g){return Math.max(0,new Date(g.ends_at||Date.now()).getTime()-Date.now())}
 function countdown(ms){let d=Math.floor(ms/86400000),h=Math.floor(ms%86400000/3600000),m=Math.floor(ms%3600000/60000),s=Math.floor(ms%60000/1000);return `<div class="timer"><div class="timebox"><strong>${String(d).padStart(2,'0')}</strong><span>Days</span></div><div class="timebox"><strong>${String(h).padStart(2,'0')}</strong><span>Hours</span></div><div class="timebox"><strong>${String(m).padStart(2,'0')}</strong><span>Mins</span></div><div class="timebox"><strong>${String(s).padStart(2,'0')}</strong><span>Secs</span></div></div>`}
 function cardHTML(g){let n=g.entries.length, mine=myEntries(g),left=timeLeft(g);return `<article class="card give-card"><div class="give-art" style="background:${g.gradient}"><span class="emoji">${g.emoji}</span><span style="position:absolute;right:15px;top:15px;z-index:2" class="chip ${g.type==='free'?'cyan':'gold'}">${g.type==='free'?'FREE ENTRY':'PAID'}</span></div><div class="give-body"><h3>${esc(g.title)}</h3><p>${esc(g.desc)}</p><div class="chips"><span class="chip">⏳ ${left?'5-day draw':'Draw ended'}</span><span class="chip cyan">👥 ${n} entries</span>${mine?`<span class="chip">✓ You entered · ${mine}</span>`:''}</div><div class="card-bottom"><span class="entry-count">${left?`${Math.floor(left/86400000)}d ${Math.floor(left%86400000/3600000)}h left`:'Draw closed'}</span><button class="primary" onclick="openGiveaway('${g.id}')">${mine?'View entry':'Enter giveaway'} →</button></div></div></article>`}
