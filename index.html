@@ -86,18 +86,19 @@ async function startRealtime(){
  .on('postgres_changes',{event:'*',schema:'public',table:'profiles'},()=>loadSharedData())
  .subscribe();
 }
+function showAuthNotice(message, isError=false){const n=$('#authNotice');if(!n)return;n.className='auth-notice show'+(isError?' error':'');n.textContent=message}
 async function finishLogin(authUser, welcome=true){
  const meta=authUser.user_metadata||{};
  const username=meta.username||authUser.email?.split('@')[0]||'Member';
  let {data:prof,error}=await supabase.from('profiles').select('*').eq('id',authUser.id).maybeSingle();
  if(!prof){const res=await supabase.from('profiles').upsert({id:authUser.id,username,avatar_url:pfpData||null},{onConflict:'id'}).select().single();prof=res.data;error=res.error}
- if(error){console.error(error);toast('Could not load profile. Check the SQL setup and RLS policies.');return}
+ if(error){console.error(error);showAuthNotice('Your authentication worked, but your profile could not be loaded: '+error.message+' — run the supplied SQL setup in the NEW project, then try logging in again.',true);return}
  user={id:authUser.id,email:authUser.email,username:prof.username,pfp:prof.avatar_url||'',joined:prof.created_at};
  $('#auth').classList.add('hidden');$('#app').classList.remove('hidden');
  $('#navName').textContent=user.username;$('#navAvatar').innerHTML=user.pfp?`<img src="${user.pfp}" alt="">`:esc(user.username[0].toUpperCase());
  await loadSharedData();await startRealtime();go('home');if(welcome)toast(`Welcome ${user.username}! ✦`);
 }
-$('#authForm').onsubmit=async e=>{e.preventDefault();const name=$('#username').value.trim(),pass=$('#password').value,email=$('#email').value.trim();if(name.length<3)return toast('Username needs at least 3 characters.');$('#authSubmit').disabled=true;
+$('#authForm').onsubmit=async e=>{e.preventDefault();const name=$('#username').value.trim(),pass=$('#password').value,email=$('#email').value.trim();if(name.length<3)return showAuthNotice('Username needs at least 3 characters.',true);showAuthNotice('Connecting securely to Supabase…');$('#authSubmit').disabled=true;
  try{
   if(signup){
    const {data,error}=await supabase.auth.signUp({email,password:pass,options:{data:{username:name}}});
@@ -113,10 +114,10 @@ $('#authForm').onsubmit=async e=>{e.preventDefault();const name=$('#username').v
   }else{
    const {data,error}=await supabase.auth.signInWithPassword({email,password:pass});if(error)throw error;await finishLogin(data.user);
   }
- }catch(err){console.error(err);$('#authNotice').className='auth-notice show error';$('#authNotice').textContent=err.message||'Could not sign in. Check your details.'}
+ }catch(err){console.error(err);showAuthNotice((err.message||'Could not sign in. Check your details.')+' If this is a new account, check Supabase Authentication settings and confirm the database SQL was run in this project.',true)}
  finally{$('#authSubmit').disabled=false}
 };
-supabase.auth.getSession().then(async({data})=>{if(data.session)await finishLogin(data.session.user,false)});
+supabase.auth.getSession().then(async({data,error})=>{if(error)showAuthNotice('Supabase session error: '+error.message,true);else if(data.session)await finishLogin(data.session.user,false)}).catch(err=>showAuthNotice('Supabase could not initialize: '+err.message,true));
 function timeLeft(g){return Math.max(0,new Date(g.ends_at||Date.now()).getTime()-Date.now())}
 function countdown(ms){let d=Math.floor(ms/86400000),h=Math.floor(ms%86400000/3600000),m=Math.floor(ms%3600000/60000),s=Math.floor(ms%60000/1000);return `<div class="timer"><div class="timebox"><strong>${String(d).padStart(2,'0')}</strong><span>Days</span></div><div class="timebox"><strong>${String(h).padStart(2,'0')}</strong><span>Hours</span></div><div class="timebox"><strong>${String(m).padStart(2,'0')}</strong><span>Mins</span></div><div class="timebox"><strong>${String(s).padStart(2,'0')}</strong><span>Secs</span></div></div>`}
 function cardHTML(g){let n=g.entries.length, mine=myEntries(g),left=timeLeft(g);return `<article class="card give-card"><div class="give-art" style="background:${g.gradient}"><span class="emoji">${g.emoji}</span><span style="position:absolute;right:15px;top:15px;z-index:2" class="chip ${g.type==='free'?'cyan':'gold'}">${g.type==='free'?'FREE ENTRY':'PAID'}</span></div><div class="give-body"><h3>${esc(g.title)}</h3><p>${esc(g.desc)}</p><div class="chips"><span class="chip">⏳ ${left?'5-day draw':'Draw ended'}</span><span class="chip cyan">👥 ${n} entries</span>${mine?`<span class="chip">✓ You entered · ${mine}</span>`:''}</div><div class="card-bottom"><span class="entry-count">${left?`${Math.floor(left/86400000)}d ${Math.floor(left%86400000/3600000)}h left`:'Draw closed'}</span><button class="primary" onclick="openGiveaway('${g.id}')">${mine?'View entry':'Enter giveaway'} →</button></div></div></article>`}
